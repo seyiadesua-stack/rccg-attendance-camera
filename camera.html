@@ -76,6 +76,11 @@
     let cameraRunning = false;
     let scanPending = false;
 
+    let lastText = "";
+    let lastAt = 0;
+
+    const SCAN_COOLDOWN = 3000;
+
     function setStatus(message) {
       document.getElementById("status").textContent = message;
     }
@@ -110,44 +115,73 @@
             fps: 10,
             qrbox: { width: 230, height: 230 }
           },
+
           function(decodedText) {
+
+            const now = Date.now();
+
+            // Do not submit another QR while one is processing.
             if (scanPending) return;
 
+            // Prevent immediate repeated submission of the same QR.
+            if (
+              decodedText === lastText &&
+              now - lastAt < SCAN_COOLDOWN
+            ) {
+              return;
+            }
+
             scanPending = true;
-            scanner.pause(true);
+            lastText = decodedText;
+            lastAt = now;
 
             setStatus("QR captured. Recording attendance...");
+
+            // IMPORTANT:
+            // Keep the camera video running.
+            // We only block additional submissions using scanPending.
 
             window.opener.postMessage({
               type: "RCCG_QR_SCAN",
               token: decodedText
             }, "*");
+
           },
+
           function() {
             // Ignore normal scanning errors while looking for a QR code.
           }
         );
 
         cameraRunning = true;
+
         document.getElementById("startBtn").disabled = true;
         document.getElementById("stopBtn").disabled = false;
 
         setStatus("Camera is running. Ready to scan.");
+
       } catch (error) {
+
         setStatus("Camera error: " + error.message);
+
       }
     }
 
+
     async function stopCamera() {
+
       if (scanner && cameraRunning) {
+
         try {
           await scanner.stop();
           await scanner.clear();
         } catch (error) {
           console.log(error);
         }
+
       }
 
+      scanner = null;
       cameraRunning = false;
       scanPending = false;
 
@@ -157,7 +191,9 @@
       setStatus("Camera stopped.");
     }
 
+
     window.addEventListener("message", function(event) {
+
       if (event.source !== window.opener) return;
 
       const data = event.data;
@@ -166,22 +202,23 @@
 
       setStatus(data.message || "Scan processed.");
 
+      // Start the cooldown from the time the server responds.
+      lastAt = Date.now();
+
+      // Allow the next QR code to be scanned.
       scanPending = false;
 
-      if (scanner && cameraRunning) {
-        try {
-          scanner.resume();
-        } catch (error) {
-          console.log(error);
-        }
-      }
     });
 
+
     window.addEventListener("beforeunload", function() {
+
       if (scanner && cameraRunning) {
         scanner.stop().catch(() => {});
       }
+
     });
+
   </script>
 </body>
 </html>
