@@ -1,0 +1,187 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RCCG Attendance QR Scanner</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px #0002;
+    }
+
+    h2 { color: #14532d; }
+
+    #reader {
+      width: 100%;
+      margin: 20px auto;
+    }
+
+    button {
+      padding: 13px 20px;
+      margin: 8px;
+      border: 0;
+      border-radius: 7px;
+      background: #166534;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #999;
+    }
+
+    #status {
+      padding: 12px;
+      background: #f0fdf4;
+      border-radius: 7px;
+      margin-top: 15px;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h2>RCCG Attendance Scanner</h2>
+    <p>Position the member's QR code inside the scanning box.</p>
+
+    <div id="reader"></div>
+
+    <button id="startBtn" onclick="startCamera()">Start Camera</button>
+    <button id="stopBtn" onclick="stopCamera()" disabled>Stop Camera</button>
+
+    <p id="status">Waiting to connect to the attendance system.</p>
+  </div>
+
+  <script>
+    let scanner = null;
+    let cameraRunning = false;
+    let scanPending = false;
+
+    function setStatus(message) {
+      document.getElementById("status").textContent = message;
+    }
+
+    async function startCamera() {
+      if (cameraRunning) return;
+
+      if (!window.opener) {
+        setStatus("Please open this scanner from the RCCG attendance system.");
+        return;
+      }
+
+      try {
+        setStatus("Requesting camera access...");
+
+        const cameras = await Html5Qrcode.getCameras();
+
+        if (!cameras || cameras.length === 0) {
+          setStatus("No camera was found on this device.");
+          return;
+        }
+
+        const backCamera =
+          cameras.find(c => /back|rear|environment/i.test(c.label)) ||
+          cameras[cameras.length - 1];
+
+        scanner = new Html5Qrcode("reader");
+
+        await scanner.start(
+          backCamera.id,
+          {
+            fps: 10,
+            qrbox: { width: 230, height: 230 }
+          },
+          function(decodedText) {
+            if (scanPending) return;
+
+            scanPending = true;
+            scanner.pause(true);
+
+            setStatus("QR captured. Recording attendance...");
+
+            window.opener.postMessage({
+              type: "RCCG_QR_SCAN",
+              token: decodedText
+            }, "*");
+          },
+          function() {
+            // Ignore normal scanning errors while looking for a QR code.
+          }
+        );
+
+        cameraRunning = true;
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("stopBtn").disabled = false;
+
+        setStatus("Camera is running. Ready to scan.");
+      } catch (error) {
+        setStatus("Camera error: " + error.message);
+      }
+    }
+
+    async function stopCamera() {
+      if (scanner && cameraRunning) {
+        try {
+          await scanner.stop();
+          await scanner.clear();
+        } catch (error) {
+          console.log(error);
+        }
+      }
+
+      cameraRunning = false;
+      scanPending = false;
+
+      document.getElementById("startBtn").disabled = false;
+      document.getElementById("stopBtn").disabled = true;
+
+      setStatus("Camera stopped.");
+    }
+
+    window.addEventListener("message", function(event) {
+      if (event.source !== window.opener) return;
+
+      const data = event.data;
+
+      if (!data || data.type !== "RCCG_SCAN_RESULT") return;
+
+      setStatus(data.message || "Scan processed.");
+
+      scanPending = false;
+
+      if (scanner && cameraRunning) {
+        try {
+          scanner.resume();
+        } catch (error) {
+          console.log(error);
+        }
+      }
+    });
+
+    window.addEventListener("beforeunload", function() {
+      if (scanner && cameraRunning) {
+        scanner.stop().catch(() => {});
+      }
+    });
+  </script>
+</body>
+</html>
